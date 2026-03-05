@@ -1,18 +1,74 @@
-body{
-font-family: Arial;
-max-width:700px;
-margin:auto;
-padding:40px;
+html {
+  font-size: 22px; /* BIG base font */
+  -webkit-text-size-adjust: 100%;
 }
 
-input{
-width:100%;
-padding:12px;
-font-size:18px;
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  margin: 0;
+  padding: 18px;
+  background: #f6f7f9;
+  color: #111;
 }
 
-button{
-padding:10px 20px;
-font-size:18px;
-margin-top:10px;
+/* Title */
+h1 {
+  font-size: 36px;
+  text-align: center;
+  margin-bottom: 20px;
+}
+
+/* Card */
+#questionBox {
+  max-width: 600px;
+  margin: auto;
+  background: white;
+  border-radius: 18px;
+  padding: 20px;
+  box-shadow: 0 8px 22px rgba(0,0,0,0.08);
+}
+
+/* Question text */
+h2 {
+  font-size: 30px;
+  line-height: 1.3;
+  margin-bottom: 18px;
+}
+
+/* Answer input */
+input[type="text"] {
+  width: 100%;
+  font-size: 22px;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid #ddd;
+  box-sizing: border-box;
+}
+
+/* Buttons stack vertically */
+.buttonRow {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+/* Buttons */
+button {
+  width: 100%;
+  font-size: 22px;
+  padding: 18px;
+  border-radius: 14px;
+  border: none;
+  cursor: pointer;
+}
+
+button.primary {
+  background: #2563eb;
+  color: white;
+}
+
+button.secondary {
+  background: #e9ecef;
+  color: #111;
 }

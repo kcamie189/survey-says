@@ -6,19 +6,22 @@ const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let currentQuestion = null;
 
-// one session per browser (for now)
+// one session per browser
 let sessionId =
   localStorage.getItem("ss_session_id") ||
   Math.random().toString(36).slice(2) + Date.now().toString(36);
+
 localStorage.setItem("ss_session_id", sessionId);
 
+// Start button
 window.addEventListener("DOMContentLoaded", () => {
   const btn = document.getElementById("startBtn");
   if (btn) btn.addEventListener("click", loadQuestion);
 });
 
 async function loadQuestion() {
-  // 1) get answered ids this session
+
+  // Get answered questions this session
   const { data: answeredRows, error: ansErr } = await client
     .from("responses")
     .select("question_id")
@@ -30,9 +33,9 @@ async function loadQuestion() {
     return;
   }
 
-  const answeredIds = [...new Set((answeredRows || []).map((r) => r.question_id))];
+  const answeredIds = [...new Set((answeredRows || []).map(r => r.question_id))];
 
-  // 2) get collecting questions
+  // Get available questions
   const { data: questions, error: qErr } = await client
     .from("questions")
     .select("id, question_text")
@@ -44,28 +47,39 @@ async function loadQuestion() {
     return;
   }
 
-  // 3) filter out ones already answered this session
-  const remaining = (questions || []).filter((q) => !answeredIds.includes(q.id));
+  const remaining = (questions || []).filter(q => !answeredIds.includes(q.id));
 
   if (remaining.length === 0) {
     document.getElementById("questionBox").innerHTML = `
       <p><strong>No more new questions for this session.</strong></p>
-      <button id="doneBtn">I’m Done</button>
+
+      <div class="buttonRow">
+        <button id="doneBtn" class="primary">I'm Done</button>
+      </div>
     `;
+
     document.getElementById("doneBtn").addEventListener("click", finish);
     return;
   }
 
-  // 4) pick random question
+  // Pick random question
   currentQuestion = remaining[Math.floor(Math.random() * remaining.length)];
 
-  // 5) render
+  // Render question
   document.getElementById("questionBox").innerHTML = `
     <h2>${escapeHtml(currentQuestion.question_text)}</h2>
-    <input id="answer" type="text" placeholder="Type your answer..." maxlength="500" />
-    <div>
-      <button id="nextBtn">Next Question</button>
-      <button id="doneBtn">I’m Done</button>
+
+    <input
+      id="answer"
+      type="text"
+      placeholder="Type your answer..."
+      maxlength="500"
+      autofocus
+    />
+
+    <div class="buttonRow">
+      <button id="nextBtn" class="primary">Next Question</button>
+      <button id="doneBtn" class="secondary">I'm Done</button>
     </div>
   `;
 
@@ -74,23 +88,27 @@ async function loadQuestion() {
 }
 
 async function submitAnswer() {
+
   if (!currentQuestion) return;
 
   const answer = (document.getElementById("answer").value || "").trim();
+
   if (!answer) {
     alert("Type an answer first.");
     return;
   }
 
-const { error } = await client.from("responses").insert({
-  session_id: sessionId,
-  question_id: currentQuestion.id,
-  answer_raw: answer,
-});
+  // Save response
+  const { error } = await client.from("responses").insert({
+    session_id: sessionId,
+    question_id: currentQuestion.id,
+    answer_raw: answer,
+  });
 
-await client.rpc("increment_question_count", {
-  qid: currentQuestion.id
-});
+  // Increment response counter
+  await client.rpc("increment_question_count", {
+    qid: currentQuestion.id
+  });
 
   if (error) {
     alert("Error saving answer: " + error.message);
@@ -101,11 +119,16 @@ await client.rpc("increment_question_count", {
 }
 
 function finish() {
+
   document.getElementById("questionBox").innerHTML = `
     <h2>Thanks for helping!</h2>
     <p>Your answers were recorded.</p>
-    <button id="startAgainBtn">Start Again</button>
+
+    <div class="buttonRow">
+      <button id="startAgainBtn" class="primary">Start Again</button>
+    </div>
   `;
+
   document.getElementById("startAgainBtn").addEventListener("click", loadQuestion);
 }
 
@@ -115,6 +138,5 @@ function escapeHtml(str) {
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
-    .replaceAll("'", "&quot;")
     .replaceAll("'", "&#039;");
 }
