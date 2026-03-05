@@ -85,6 +85,12 @@ async function loadQuestion() {
 
   document.getElementById("nextBtn").addEventListener("click", submitAnswer);
   document.getElementById("doneBtn").addEventListener("click", finish);
+  document.getElementById("answer").addEventListener("keydown", function(e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      submitAnswer();
+    }
+  });
 }
 
 async function submitAnswer() {
