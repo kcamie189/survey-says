@@ -20,7 +20,6 @@ window.addEventListener("DOMContentLoaded", () => {
 });
 
 async function loadQuestion() {
-
   // Get answered questions this session
   const { data: answeredRows, error: ansErr } = await client
     .from("responses")
@@ -74,27 +73,36 @@ async function loadQuestion() {
       type="text"
       placeholder="Type your answer..."
       maxlength="500"
-      autofocus
     />
 
     <div class="buttonRow">
       <button id="nextBtn" class="primary">Next Question</button>
+      <button id="skipBtn" class="secondary">Skip</button>
       <button id="doneBtn" class="secondary">I'm Done</button>
     </div>
   `;
 
-  document.getElementById("nextBtn").addEventListener("click", submitAnswer);
-  document.getElementById("doneBtn").addEventListener("click", finish);
-  document.getElementById("answer").addEventListener("keydown", function(e) {
+  const answerInput = document.getElementById("answer");
+  const nextBtn = document.getElementById("nextBtn");
+  const skipBtn = document.getElementById("skipBtn");
+  const doneBtn = document.getElementById("doneBtn");
+
+  nextBtn.addEventListener("click", submitAnswer);
+  skipBtn.addEventListener("click", skipQuestion);
+  doneBtn.addEventListener("click", finish);
+
+  answerInput.addEventListener("keydown", function (e) {
     if (e.key === "Enter") {
       e.preventDefault();
       submitAnswer();
     }
   });
+
+  // Auto-select the input so the cursor is ready immediately
+  answerInput.focus();
 }
 
 async function submitAnswer() {
-
   if (!currentQuestion) return;
 
   const answer = (document.getElementById("answer").value || "").trim();
@@ -111,21 +119,27 @@ async function submitAnswer() {
     answer_raw: answer,
   });
 
-  // Increment response counter
-  await client.rpc("increment_question_count", {
-    qid: currentQuestion.id
-  });
-
   if (error) {
     alert("Error saving answer: " + error.message);
     return;
   }
 
+  // Increment response counter
+  await client.rpc("increment_question_count", {
+    qid: currentQuestion.id
+  });
+
+  loadQuestion();
+}
+
+async function skipQuestion() {
+  if (!currentQuestion) return;
+
+  // Do not record anything for skipped questions
   loadQuestion();
 }
 
 function finish() {
-
   document.getElementById("questionBox").innerHTML = `
     <h2>Thanks for helping!</h2>
     <p>Your answers were recorded.</p>
