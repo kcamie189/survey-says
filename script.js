@@ -5,73 +5,38 @@ const SUPABASE_KEY = "sb_publishable_WaDBD_zc4FjsDq2l15atZg_EyYzPG--";
 const client = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let currentQuestion = null;
+
+// one session per browser
+let sessionId =
+  localStorage.getItem("ss_session_id") ||
+  Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+localStorage.setItem("ss_session_id", sessionId);
+
+// optional event code
 let eventCode = (localStorage.getItem("ss_event_code") || "").trim().toUpperCase();
-let sessionId = "";
 
-// ---------- helpers ----------
-function makeSessionId() {
-  return Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-
-function setSessionForCode(code) {
-  eventCode = (code || "").trim().toUpperCase();
-  localStorage.setItem("ss_event_code", eventCode);
-
-  const sessionKey = `ss_session_id_${eventCode}`;
-  sessionId = localStorage.getItem(sessionKey) || makeSessionId();
-  localStorage.setItem(sessionKey, sessionId);
-}
-
-function escapeHtml(str) {
-  return String(str)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function getNextThresholdMessage(nextEntryNumber) {
-  if (nextEntryNumber === 1) {
-    return "Answer 25 questions to earn your first entry.";
-  }
-  if (nextEntryNumber === 2) {
-    return "Keep going — 50 total answered questions earns entry #2.";
-  }
-  if (nextEntryNumber === 3) {
-    return "Keep going — 75 total answered questions earns entry #3.";
-  }
-  return "You have earned the maximum number of entries.";
-}
-
-// ---------- setup UI ----------
+// ---------- setup ----------
 window.addEventListener("DOMContentLoaded", () => {
   buildCodeBar();
   buildEntryModal();
 
-  if (eventCode) {
-    setSessionForCode(eventCode);
-    const codeInput = document.getElementById("eventCode");
-    const codeStatus = document.getElementById("codeStatus");
-    if (codeInput) codeInput.value = eventCode;
-    if (codeStatus) codeStatus.textContent = `Code saved: ${eventCode}`;
+  const codeInput = document.getElementById("eventCode");
+  const codeStatus = document.getElementById("codeStatus");
+
+  if (eventCode && codeInput) {
+    codeInput.value = eventCode;
+    codeStatus.textContent = `Code saved: ${eventCode}`;
   }
 
   const btn = document.getElementById("startBtn");
-  if (btn) {
-    btn.addEventListener("click", async () => {
-      if (!eventCode) {
-        alert("Enter the event code first.");
-        return;
-      }
-      await loadQuestion();
-    });
-  }
+  if (btn) btn.addEventListener("click", loadQuestion);
 });
 
+// ---------- UI helpers ----------
 function buildCodeBar() {
-  const startBtn = document.getElementById("startBtn");
-  if (!startBtn) return;
+  const questionBox = document.getElementById("questionBox");
+  if (!questionBox) return;
 
   const wrapper = document.createElement("div");
   wrapper.id = "codeBar";
@@ -81,7 +46,7 @@ function buildCodeBar() {
       <input
         id="eventCode"
         type="text"
-        placeholder="Enter event code"
+        placeholder="Event code (optional)"
         maxlength="30"
         style="padding:10px 12px; font-size:16px; text-transform:uppercase; min-width:220px;"
       />
@@ -90,7 +55,7 @@ function buildCodeBar() {
     <div id="codeStatus" style="margin-top:8px; text-align:center; font-size:14px;"></div>
   `;
 
-  startBtn.parentNode.insertBefore(wrapper, startBtn);
+  questionBox.parentNode.insertBefore(wrapper, questionBox);
 
   document.getElementById("saveCodeBtn").addEventListener("click", saveEventCode);
   document.getElementById("eventCode").addEventListener("keydown", (e) => {
@@ -135,35 +100,28 @@ function buildEntryModal() {
   document.body.appendChild(modal);
 }
 
-async function saveEventCode() {
+function saveEventCode() {
   const codeInput = document.getElementById("eventCode");
   const codeStatus = document.getElementById("codeStatus");
 
   const enteredCode = (codeInput.value || "").trim().toUpperCase();
+  eventCode = enteredCode;
+  localStorage.setItem("ss_event_code", eventCode);
 
-  if (!enteredCode) {
-    codeStatus.textContent = "Please enter a code.";
-    return;
+  if (eventCode) {
+    codeStatus.textContent = `Code saved: ${eventCode}`;
+  } else {
+    codeStatus.textContent = "No code entered. That's fine — you can still play.";
   }
-
-  setSessionForCode(enteredCode);
-  codeInput.value = eventCode;
-  codeStatus.textContent = `Code saved: ${eventCode}`;
 }
 
 // ---------- core survey ----------
 async function loadQuestion() {
-  if (!eventCode || !sessionId) {
-    alert("Enter the event code first.");
-    return;
-  }
-
-  // Get answered questions for this session + code
+  // Get answered questions this session
   const { data: answeredRows, error: ansErr } = await client
     .from("responses")
     .select("question_id")
-    .eq("session_id", sessionId)
-    .eq("event_code", eventCode);
+    .eq("session_id", sessionId);
 
   if (ansErr) {
     document.getElementById("questionBox").innerHTML =
@@ -190,7 +148,6 @@ async function loadQuestion() {
   if (remaining.length === 0) {
     document.getElementById("questionBox").innerHTML = `
       <p><strong>No more new questions for this session.</strong></p>
-      <p>You can stop here or come back later with a different event code.</p>
 
       <div class="buttonRow">
         <button id="doneBtn" class="primary">I'm Done</button>
@@ -204,9 +161,7 @@ async function loadQuestion() {
   currentQuestion = remaining[Math.floor(Math.random() * remaining.length)];
 
   document.getElementById("questionBox").innerHTML = `
-    <div style="margin-bottom:10px; font-size:14px; opacity:0.8;">
-      Event Code: <strong>${escapeHtml(eventCode)}</strong>
-    </div>
+    ${eventCode ? `<div style="margin-bottom:10px; font-size:14px; opacity:0.8;">Event Code: <strong>${escapeHtml(eventCode)}</strong></div>` : ""}
 
     <h2>${escapeHtml(currentQuestion.question_text)}</h2>
 
@@ -245,10 +200,6 @@ async function loadQuestion() {
 
 async function submitAnswer() {
   if (!currentQuestion) return;
-  if (!eventCode || !sessionId) {
-    alert("Enter the event code first.");
-    return;
-  }
 
   const answer = (document.getElementById("answer").value || "").trim();
 
@@ -257,38 +208,36 @@ async function submitAnswer() {
     return;
   }
 
-  const payload = {
+  const { error } = await client.from("responses").insert({
     session_id: sessionId,
     question_id: currentQuestion.id,
     answer_raw: answer,
-    event_code: eventCode
-  };
-
-  const { error } = await client.from("responses").insert(payload);
+    event_code: eventCode || null
+  });
 
   if (error) {
     alert("Error saving answer: " + error.message);
     return;
   }
 
-  // Increment response counter
   await client.rpc("increment_question_count", {
     qid: currentQuestion.id
   });
 
-  // Only non-skipped, successfully saved answers count
+  // only successfully saved, non-skipped answers count
   const answeredCount = await getAnsweredCount();
   const prompted = await maybePromptForEntry(answeredCount);
 
   if (!prompted) {
-    await loadQuestion();
+    loadQuestion();
   }
 }
 
 async function skipQuestion() {
   if (!currentQuestion) return;
-  // Skip does not save, so it does not count toward 25/50/75
-  await loadQuestion();
+
+  // skipped questions do not get saved and do not count
+  loadQuestion();
 }
 
 function finish() {
@@ -297,20 +246,19 @@ function finish() {
     <p>Your answers were recorded.</p>
 
     <div class="buttonRow">
-      <button id="startAgainBtn" class="primary">Continue Answering</button>
+      <button id="startAgainBtn" class="primary">Start Again</button>
     </div>
   `;
 
   document.getElementById("startAgainBtn").addEventListener("click", loadQuestion);
 }
 
-// ---------- counting + entries ----------
+// ---------- counting ----------
 async function getAnsweredCount() {
   const { count, error } = await client
     .from("responses")
     .select("*", { count: "exact", head: true })
-    .eq("session_id", sessionId)
-    .eq("event_code", eventCode);
+    .eq("session_id", sessionId);
 
   if (error) {
     console.error("Error counting answers:", error);
@@ -320,15 +268,14 @@ async function getAnsweredCount() {
   return count || 0;
 }
 
-async function getEntryCount() {
+async function getSessionEntryCount() {
   const { count, error } = await client
     .from("contest_entries")
     .select("*", { count: "exact", head: true })
-    .eq("session_id", sessionId)
-    .eq("event_code", eventCode);
+    .eq("session_id", sessionId);
 
   if (error) {
-    console.error("Error counting entries:", error);
+    console.error("Error counting session entries:", error);
     return 0;
   }
 
@@ -336,8 +283,8 @@ async function getEntryCount() {
 }
 
 async function maybePromptForEntry(answeredCount) {
-  const entriesClaimed = await getEntryCount();
-  const nextEntryNumber = entriesClaimed + 1;
+  const sessionEntriesClaimed = await getSessionEntryCount();
+  const nextEntryNumber = sessionEntriesClaimed + 1;
 
   if (nextEntryNumber > 3) return false;
 
@@ -351,6 +298,41 @@ async function maybePromptForEntry(answeredCount) {
   return false;
 }
 
+// ---------- daily email limit ----------
+function getTodayRangeLocal() {
+  const now = new Date();
+
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+
+  const end = new Date(now);
+  end.setHours(23, 59, 59, 999);
+
+  return {
+    startIso: start.toISOString(),
+    endIso: end.toISOString()
+  };
+}
+
+async function getTodayEntryCountByEmail(email) {
+  const { startIso, endIso } = getTodayRangeLocal();
+
+  const { count, error } = await client
+    .from("contest_entries")
+    .select("*", { count: "exact", head: true })
+    .eq("email", email)
+    .gte("created_at", startIso)
+    .lte("created_at", endIso);
+
+  if (error) {
+    console.error("Error counting daily email entries:", error);
+    return 0;
+  }
+
+  return count || 0;
+}
+
+// ---------- entry modal ----------
 function showEntryModal(entryNumber, answeredCount) {
   const modal = document.getElementById("entryModal");
   const title = document.getElementById("entryTitle");
@@ -365,15 +347,15 @@ function showEntryModal(entryNumber, answeredCount) {
 
   let nextMsg = "";
   if (entryNumber === 1) {
-    nextMsg = "Answer 25 more questions to earn entry #2, and 25 after that for entry #3.";
+    nextMsg = "Answer 25 more questions for entry #2, and 25 more after that for entry #3.";
   } else if (entryNumber === 2) {
-    nextMsg = "Answer 25 more questions to earn your final entry.";
+    nextMsg = "Answer 25 more questions for your final entry.";
   } else {
-    nextMsg = "This is your final available entry.";
+    nextMsg = "This is your final available session entry.";
   }
 
   blurb.textContent =
-    `You have submitted ${answeredCount} answers. Enter your name and email to claim entry #${entryNumber}. ${nextMsg}`;
+    `You have submitted ${answeredCount} answers. Enter your name and email to claim this entry. Limit 3 entries per day per email. ${nextMsg}`;
 
   errorBox.textContent = "";
   nameInput.value = "";
@@ -396,34 +378,47 @@ function showEntryModal(entryNumber, answeredCount) {
       return;
     }
 
+    const dailyCount = await getTodayEntryCountByEmail(email);
+
+    if (dailyCount >= 3) {
+      errorBox.textContent = "That email has already claimed the maximum 3 entries for today.";
+      return;
+    }
+
     const { error } = await client.from("contest_entries").insert({
       session_id: sessionId,
-      event_code: eventCode,
+      event_code: eventCode || null,
       entry_number: entryNumber,
       name,
       email
     });
 
     if (error) {
-      if (String(error.message || "").toLowerCase().includes("duplicate")) {
-        errorBox.textContent = "That entry was already claimed for this session.";
-      } else {
-        errorBox.textContent = "Error saving entry: " + error.message;
-      }
+      errorBox.textContent = "Error saving entry: " + error.message;
       return;
     }
 
     hideEntryModal();
-    await loadQuestion();
+    loadQuestion();
   };
 
   skipBtn.onclick = async () => {
     hideEntryModal();
-    await loadQuestion();
+    loadQuestion();
   };
 }
 
 function hideEntryModal() {
   const modal = document.getElementById("entryModal");
   if (modal) modal.style.display = "none";
+}
+
+// ---------- misc ----------
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
