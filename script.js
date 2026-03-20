@@ -16,11 +16,23 @@ localStorage.setItem("ss_session_id", sessionId);
 // optional event code
 let eventCode = (localStorage.getItem("ss_event_code") || "").trim().toUpperCase();
 
-function getCodeKey() {
-  return eventCode || "NO_CODE";
+function normalizeEventCode(code) {
+  return String(code || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "");
 }
 
-// America/New_York day key like 2026-03-12
+function getCodeKey() {
+  const normalized = normalizeEventCode(eventCode);
+  return normalized || "NO_CODE";
+}
+
+function isMicroworkersCode() {
+  return getCodeKey() === "MICROWORKERS";
+}
+
+// America/New_York day key like 2026-03-20
 function getDayKey() {
   const fmt = new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/New_York",
@@ -43,7 +55,10 @@ function getLocalDayRangeForEastern() {
   const endEastern = new Date(easternNow);
   endEastern.setHours(23, 59, 59, 999);
 
-  const offsetNow = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" })).getTime() - now.getTime();
+  const offsetNow =
+    new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" })).getTime() -
+    now.getTime();
+
   const startUtc = new Date(startEastern.getTime() - offsetNow);
   const endUtc = new Date(endEastern.getTime() - offsetNow);
 
@@ -154,18 +169,23 @@ function saveEventCode() {
     codeStatus.textContent = "No code entered. That's fine — you can still play.";
   }
 
+  hideEntryModal();
   loadQuestion();
 }
 
 // ---------- core survey ----------
 async function loadQuestion() {
   const answeredCount = await getAnsweredCount();
-  const sessionEntriesClaimed = await getSessionEntryCount();
+  const sessionEntriesClaimed = isMicroworkersCode() ? 0 : await getSessionEntryCount();
+
+  if (isMicroworkersCode() && answeredCount >= 25) {
+    await showMicroworkersCompletionScreen();
+    return;
+  }
 
   const codeKey = getCodeKey();
   const { startIso, endIso } = getLocalDayRangeForEastern();
 
-  // answered questions for this session + code + today only
   const { data: answeredRows, error: ansErr } = await client
     .from("responses")
     .select("question_id")
@@ -180,7 +200,7 @@ async function loadQuestion() {
     return;
   }
 
-  const answeredIds = [...new Set((answeredRows || []).map(r => r.question_id))];
+  const answeredIds = [...new Set((answeredRows || []).map((r) => r.question_id))];
 
   const { data: questions, error: qErr } = await client
     .from("questions")
@@ -193,7 +213,7 @@ async function loadQuestion() {
     return;
   }
 
-  const remaining = (questions || []).filter(q => !answeredIds.includes(q.id));
+  const remaining = (questions || []).filter((q) => !answeredIds.includes(q.id));
 
   if (remaining.length === 0) {
     document.getElementById("questionBox").innerHTML = `
@@ -254,6 +274,29 @@ async function loadQuestion() {
 }
 
 function getProgressMarkup(answeredCount, entriesClaimed) {
+  if (isMicroworkersCode()) {
+    const progress = Math.min(answeredCount, 25);
+    const percent = Math.max(0, Math.min(100, (progress / 25) * 100));
+    const remaining = Math.max(0, 25 - progress);
+
+    return `
+      <div style="margin-bottom:18px;">
+        <div style="display:flex; justify-content:space-between; gap:12px; margin-bottom:8px; font-size:15px; font-weight:700;">
+          <span>Progress to completion code</span>
+          <span>${progress} / 25</span>
+        </div>
+        <div style="height:14px; background:#e5e7eb; border-radius:999px; overflow:hidden;">
+          <div style="width:${percent}%; height:100%; background:linear-gradient(90deg, #60a5fa, #2563eb); transition:width 0.25s ease;"></div>
+        </div>
+        <div style="font-size:14px; margin-top:8px; color:#374151;">
+          ${remaining === 0
+            ? `You earned your completion code.`
+            : `${remaining} more answered question${remaining === 1 ? "" : "s"} until your completion code.`}
+        </div>
+      </div>
+    `;
+  }
+
   if (entriesClaimed >= 3) {
     return `
       <div style="margin-bottom:18px;">
@@ -318,6 +361,17 @@ async function submitAnswer() {
   await client.rpc("increment_question_count", { qid: currentQuestion.id });
 
   const answeredCount = await getAnsweredCount();
+
+  if (isMicroworkersCode()) {
+    if (answeredCount >= 25) {
+      await showMicroworkersCompletionScreen();
+      return;
+    }
+
+    await loadQuestion();
+    return;
+  }
+
   const prompted = await maybePromptForEntry(answeredCount);
 
   if (!prompted) {
@@ -331,6 +385,8 @@ async function skipQuestion() {
 }
 
 function finish() {
+  hideEntryModal();
+
   document.getElementById("questionBox").innerHTML = `
     <h2>Thanks for helping!</h2>
     <p>Your answers were recorded.</p>
@@ -341,6 +397,165 @@ function finish() {
   `;
 
   document.getElementById("startAgainBtn").addEventListener("click", loadQuestion);
+}
+
+// ---------- MICROWORKERS code assignment ----------
+async function getAssignedMicroworkersCode() {
+  const codeKey = getCodeKey();
+  const { startIso, endIso } = getLocalDayRangeForEastern();
+
+  const { data: existingRows, error: existingErr } = await client
+    .from("microworker_codes")
+    .select("id, code")
+    .eq("assigned_session_id", sessionId)
+    .eq("assigned_event_code", codeKey)
+    .gte("assigned_at", startIso)
+    .lte("assigned_at", endIso)
+    .limit(1);
+
+  if (existingErr) {
+    throw new Error("Could not check existing completion code: " + existingErr.message);
+  }
+
+  if (existingRows && existingRows.length) {
+    return existingRows[0].code;
+  }
+
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const { data: availableRows, error: availErr } = await client
+      .from("microworker_codes")
+      .select("id, code")
+      .eq("is_assigned", false)
+      .order("id", { ascending: true })
+      .limit(1);
+
+    if (availErr) {
+      throw new Error("Could not fetch an available completion code: " + availErr.message);
+    }
+
+    if (!availableRows || !availableRows.length) {
+      throw new Error("No completion codes remain in microworker_codes.");
+    }
+
+    const candidate = availableRows[0];
+
+    const { data: claimedRows, error: claimErr } = await client
+      .from("microworker_codes")
+      .update({
+        is_assigned: true,
+        assigned_at: new Date().toISOString(),
+        assigned_session_id: sessionId,
+        assigned_event_code: codeKey
+      })
+      .eq("id", candidate.id)
+      .eq("is_assigned", false)
+      .select("code");
+
+    if (claimErr) {
+      continue;
+    }
+
+    if (claimedRows && claimedRows.length) {
+      return claimedRows[0].code;
+    }
+  }
+
+  throw new Error("Could not safely assign a completion code. Please try again.");
+}
+
+async function showMicroworkersCompletionScreen() {
+  hideEntryModal();
+
+  const questionBox = document.getElementById("questionBox");
+
+  questionBox.innerHTML = `
+    <div style="margin-bottom:10px; font-size:14px; opacity:0.8;">
+      Event Code: <strong>${escapeHtml(getCodeKey())}</strong>
+    </div>
+
+    <div style="margin-bottom:18px;">
+      <div style="font-size:15px; font-weight:700; margin-bottom:8px;">Task completed</div>
+      <div style="height:14px; background:#e5e7eb; border-radius:999px; overflow:hidden;">
+        <div style="width:100%; height:100%; background:linear-gradient(90deg, #60a5fa, #2563eb);"></div>
+      </div>
+    </div>
+
+    <h2>Loading completion code...</h2>
+  `;
+
+  try {
+    const completionCode = await getAssignedMicroworkersCode();
+
+    questionBox.innerHTML = `
+      <div style="margin-bottom:10px; font-size:14px; opacity:0.8;">
+        Event Code: <strong>${escapeHtml(getCodeKey())}</strong>
+      </div>
+
+      <div style="margin-bottom:18px;">
+        <div style="font-size:15px; font-weight:700; margin-bottom:8px;">Task completed</div>
+        <div style="height:14px; background:#e5e7eb; border-radius:999px; overflow:hidden;">
+          <div style="width:100%; height:100%; background:linear-gradient(90deg, #60a5fa, #2563eb);"></div>
+        </div>
+      </div>
+
+      <h2>Completion Code</h2>
+      <p>You have answered 25 questions. Submit this code in Microworkers:</p>
+
+      <div style="
+        margin:20px 0;
+        padding:16px;
+        border-radius:12px;
+        background:#f3f4f6;
+        font-size:30px;
+        font-weight:800;
+        letter-spacing:2px;
+        text-align:center;
+      ">
+        ${escapeHtml(completionCode)}
+      </div>
+
+      <div class="buttonRow">
+        <button id="copyCodeBtn" class="primary">Copy Code</button>
+        <button id="doneBtn" class="secondary">I'm Done</button>
+      </div>
+    `;
+
+    const copyBtn = document.getElementById("copyCodeBtn");
+    const doneBtn = document.getElementById("doneBtn");
+
+    if (copyBtn) {
+      copyBtn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(completionCode);
+          copyBtn.textContent = "Copied!";
+        } catch (err) {
+          alert("Could not copy automatically. Please copy the code manually.");
+        }
+      });
+    }
+
+    if (doneBtn) {
+      doneBtn.addEventListener("click", finish);
+    }
+  } catch (err) {
+    questionBox.innerHTML = `
+      <div style="margin-bottom:10px; font-size:14px; opacity:0.8;">
+        Event Code: <strong>${escapeHtml(getCodeKey())}</strong>
+      </div>
+      <h2>Completion Code Error</h2>
+      <p>${escapeHtml(err.message || "Unknown error")}</p>
+      <div class="buttonRow">
+        <button id="retryMwBtn" class="primary">Try Again</button>
+      </div>
+    `;
+
+    const retryBtn = document.getElementById("retryMwBtn");
+    if (retryBtn) {
+      retryBtn.addEventListener("click", () => {
+        showMicroworkersCompletionScreen();
+      });
+    }
+  }
 }
 
 // ---------- counting ----------
@@ -385,6 +600,14 @@ async function getSessionEntryCount() {
 }
 
 async function maybePromptForEntry(answeredCount) {
+  if (isMicroworkersCode()) {
+    if (answeredCount >= 25) {
+      await showMicroworkersCompletionScreen();
+      return true;
+    }
+    return false;
+  }
+
   const sessionEntriesClaimed = await getSessionEntryCount();
   const nextEntryNumber = sessionEntriesClaimed + 1;
 
@@ -445,6 +668,11 @@ async function getFirstSessionEntryToday() {
 
 // ---------- entry modal ----------
 async function showEntryModal(entryNumber, answeredCount) {
+  if (isMicroworkersCode()) {
+    await showMicroworkersCompletionScreen();
+    return;
+  }
+
   const modal = document.getElementById("entryModal");
   const title = document.getElementById("entryTitle");
   const blurb = document.getElementById("entryBlurb");
